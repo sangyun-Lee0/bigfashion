@@ -1,4 +1,5 @@
 from pathlib import Path
+import html as html_lib
 
 import pandas as pd
 import requests
@@ -194,14 +195,21 @@ def render_product_card(row: pd.Series, rank: int, goods_map: dict[str, dict]) -
     brand_name = str(info.get("brandName", "브랜드"))
     final_price = info.get("finalPrice", 0)
     review_count = info.get("reviewCount", 0)
+    product_url = str(info.get("linkUrl", f"https://www.musinsa.com/products/{goods_no}"))
 
-    safe_title = str(row["상품명"])
+    safe_title = html_lib.escape(str(row["상품명"]))
+    safe_brand = html_lib.escape(brand_name)
+    safe_product_url = html_lib.escape(product_url, quote=True)
     thumb = image_url or "https://via.placeholder.com/400x400?text=NO+IMAGE"
-    html = (
+    card_html = (
         "<div class='product-card'>"
+        f"<a href='{safe_product_url}' target='_blank'>"
         f"<img class='product-thumb' src='{thumb}' />"
-        f"<div class='muted'>#{rank} · {brand_name}</div>"
+        "</a>"
+        f"<div class='muted'>#{rank} · {safe_brand}</div>"
+        f"<a href='{safe_product_url}' target='_blank' style='text-decoration:none;color:inherit;'>"
         f"<div class='product-title'>{safe_title}</div>"
+        "</a>"
         f"<div><span class='badge'>어깨 추천</span>"
         f"<span class='badge'>리뷰 {int(review_count):,}</span>"
         f"<span class='score-chip'>점수 {row.get('최종점수', 0):.3f}</span></div>"
@@ -210,7 +218,7 @@ def render_product_card(row: pd.Series, rank: int, goods_map: dict[str, dict]) -
         f"어깨중앙 {row.get('어깨단면_중앙값', 0):.1f}</div>"
         "</div>"
     )
-    st.markdown(html, unsafe_allow_html=True)
+    st.markdown(card_html, unsafe_allow_html=True)
 
 
 def main() -> None:
