@@ -1,11 +1,13 @@
 from pathlib import Path
 import html as html_lib
+import time
 
 import pandas as pd
 import requests
 import streamlit as st
 
 DATA_PATH = Path("review_new_excels/남성_상의_어깨분석.xlsx")
+SPLASH_PATH = Path("spot.png")
 GOODS_INFO_API = "https://api.musinsa.com/api2/dp/v1/goods"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
@@ -42,8 +44,8 @@ def recompute_scores(df: pd.DataFrame, alpha: float, beta: float) -> pd.DataFram
     return result
 
 
-@st.cache_data(show_spinner=False)
-def load_goods_info(goods_nos: list[str]) -> dict[str, dict]:
+@st.cache_data(show_spinner=False, ttl=3600)
+def load_goods_info(goods_nos: tuple[str, ...]) -> dict[str, dict]:
     if not goods_nos:
         return {}
     try:
@@ -51,7 +53,7 @@ def load_goods_info(goods_nos: list[str]) -> dict[str, dict]:
             GOODS_INFO_API,
             params={"goodsNoList": ",".join(goods_nos), "saleStateList": "SALE,SOLD_OUT"},
             headers={"User-Agent": USER_AGENT},
-            timeout=20,
+            timeout=8,
         )
         response.raise_for_status()
         payload = response.json()
@@ -223,6 +225,30 @@ def render_product_card(row: pd.Series, rank: int, goods_map: dict[str, dict]) -
 
 def main() -> None:
     st.set_page_config(page_title="핏 기반 추천 데모", layout="wide")
+
+    # One-time splash screen on first app entry.
+    if not st.session_state.get("splash_done", False):
+        st.markdown("<div style='height:6vh;'></div>", unsafe_allow_html=True)
+        center_col = st.columns([1.2, 1.6, 1.2])[1]
+        with center_col:
+            if SPLASH_PATH.exists():
+                image_col = st.columns([1, 3.6, 1])[1]
+                with image_col:
+                    st.image(str(SPLASH_PATH), width=420)
+            st.markdown(
+                "<div style='text-align:center;color:#111;font-weight:800;"
+                "font-size:30px;letter-spacing:.5px;margin-top:8px;'>FIT RECOMMENDER</div>",
+                unsafe_allow_html=True,
+            )
+        st.markdown(
+            "<div style='text-align:center;color:#555;font-size:15px;'>"
+            "데이터를 불러오는 중입니다...</div>",
+            unsafe_allow_html=True,
+        )
+        time.sleep(1.0)
+        st.session_state["splash_done"] = True
+        st.rerun()
+
     inject_style()
 
     st.markdown(
@@ -280,17 +306,37 @@ def main() -> None:
         return
 
     ranked_df = recompute_scores(df, alpha=alpha, beta=beta)
+    # Normalize sort columns to numeric and keep NaN at the end deterministically.
+    ranked_df["최종점수"] = pd.to_numeric(ranked_df["최종점수"], errors="coerce")
+    ranked_df["어깨키워드_언급비율(%)"] = pd.to_numeric(
+        ranked_df["어깨키워드_언급비율(%)"], errors="coerce"
+    )
+    ranked_df["점수_절대수치"] = pd.to_numeric(ranked_df["점수_절대수치"], errors="coerce")
     if sort_key == "추천순":
-        ranked_df = ranked_df.sort_values("최종점수", ascending=False).reset_index(drop=True)
+        ranked_df = ranked_df.sort_values(
+            by=["최종점수", "어깨키워드_언급비율(%)"],
+            ascending=[False, False],
+            na_position="last",
+            kind="mergesort",
+        ).reset_index(drop=True)
     elif sort_key == "리뷰 언급순":
-        ranked_df = ranked_df.sort_values("어깨키워드_언급비율(%)", ascending=False).reset_index(drop=True)
+        ranked_df = ranked_df.sort_values(
+            by=["어깨키워드_언급비율(%)", "최종점수"],
+            ascending=[False, False],
+            na_position="last",
+            kind="mergesort",
+        ).reset_index(drop=True)
     else:
-        ranked_df = ranked_df.sort_values("점수_절대수치", ascending=False).reset_index(drop=True)
-
-    goods_nos = [str(int(v)) for v in ranked_df["상품번호"].tolist()]
-    goods_map = load_goods_info(goods_nos)
+        ranked_df = ranked_df.sort_values(
+            by=["점수_절대수치", "최종점수"],
+            ascending=[False, False],
+            na_position="last",
+            kind="mergesort",
+        ).reset_index(drop=True)
 
     shown = ranked_df.head(top_n).reset_index(drop=True)
+    shown_goods_nos = tuple(sorted({str(int(v)) for v in shown["상품번호"].tolist()}))
+    goods_map = load_goods_info(shown_goods_nos)
     with right:
         st.markdown("### 어깨 핏 추천 상품")
         grid_cols = st.columns(4)
